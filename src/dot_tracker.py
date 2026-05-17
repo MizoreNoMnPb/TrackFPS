@@ -17,6 +17,15 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+TEAM_COLORS_BGR = {
+    "white":  (236, 238, 238),   # EEEEEC
+    "yellow": (0, 202, 236),     # ECCA00
+    "green":  (88, 201, 38),     # 26C958
+    "red":    (91, 52, 254),     # FE345B
+    "blue":   (253, 141, 36),    # 248DFD
+    "purple": (239, 90, 191),    # BF5AEF
+}
+
 TEAM_COLORS_HSV = {
     "white":  ((0, 0, 160), (180, 50, 255)),
     "yellow": ((20, 40, 80), (40, 255, 255)),
@@ -264,23 +273,76 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
     # Compute trajectory stats
     stats = compute_trajectory_stats(named)
 
-    # Draw individual trajectories
-    if map_region:
-        bgg = cv2.imread(map_region)
-        if bgg is not None:
-            bgg = cv2.resize(bgg, (854, 852))
-            colors = [(0, 255, 0), (255, 255, 0), (0, 255, 255)]
-            out_dir = Path(map_dir).parent / "trajectory"
-            out_dir.mkdir(parents=True, exist_ok=True)
-            for i, (pid, pts) in enumerate(named.items()):
-                c = colors[i % 3]
-                cvs = bgg.copy()
-                for j in range(1, len(pts)):
-                    cv2.line(cvs, (int(pts[j-1][0]), int(pts[j-1][1])),
-                             (int(pts[j][0]), int(pts[j][1])), c, 2)
-                for x, y, _ in pts[::20]:
-                    cv2.circle(cvs, (int(x), int(y)), 7, c, 1)
-                cv2.imwrite(str(out_dir / f"track_{team_name}_{pid}.jpg"), cvs)
+    # Draw individual trajectories with labeled map background
+    out_dir = Path(map_dir).parent / "trajectory"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Try labeled map crop first, then unlabeled map_region, then fallback
+    labeled_path = Path(map_dir).parent / "map_region_labeled.png"
+    if labeled_path.exists():
+        bgg = cv2.imread(str(labeled_path))
+    elif map_region:
+        bgg = cv2.imread(str(map_region))
+    else:
+        bgg = None
+    if bgg is not None:
+        bgg = cv2.resize(bgg, (854, 852))
+    else:
+        bgg = np.zeros((852, 854, 3), dtype=np.uint8)
+
+    team_c = TEAM_COLORS_BGR.get(team_color, (255, 255, 255))
+    turn_c = (0, 255, 255)   # yellow for turns
+    stop_c = (0, 0, 255)     # red for stops
+    dt = 2.0 / 59.94  # seconds per extracted frame
+
+    for pid, pts in named.items():
+        cvs = bgg.copy()
+
+        # Draw trajectory line
+        for j in range(1, len(pts)):
+            cv2.line(cvs, (int(pts[j-1][0]), int(pts[j-1][1])),
+                     (int(pts[j][0]), int(pts[j][1])), team_c, 2)
+        for x, y, _ in pts[::20]:
+            cv2.circle(cvs, (int(x), int(y)), 7, team_c, 1)
+
+        # Mark significant turns (>90°) from stats
+        if pid in stats:
+            for turn in stats[pid]["turns"]:
+                if abs(turn["angle_change_deg"]) > 90:
+                    cv2.circle(cvs, (int(turn["x"]), int(turn["y"])), 10, turn_c, 2)
+
+            # Mark stops (speed < 2 px/s sustained for >0.5s = ~15 frames)
+            pts_list = stats[pid]["points"]
+            stop_start = None
+            for i, p in enumerate(pts_list):
+                if p["speed"] < 2:
+                    if stop_start is None:
+                        stop_start = i
+                else:
+                    if stop_start is not None and (i - stop_start) * dt > 0.5:
+                        mid = (stop_start + i) // 2
+                        cv2.circle(cvs, (int(pts_list[mid]["x"]), int(pts_list[mid]["y"])),
+                                   12, stop_c, 2)
+                        cv2.putText(cvs, f'{((i-stop_start)*dt):.1f}s',
+                                    (int(pts_list[mid]["x"])+15, int(pts_list[mid]["y"])),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, stop_c, 1)
+                    stop_start = None
+
+        # Label: TeamName | PlayerName in bottom-left
+        label = f"{team_name} | {pid}"
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        overlay = cvs.copy()
+        cv2.rectangle(overlay, (5, 835 - th), (tw + 15, 847), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.5, cvs, 0.5, 0, cvs)
+        cv2.putText(cvs, label, (10, 843), cv2.FONT_HERSHEY_SIMPLEX, 0.5, team_c, 1)
+
+        # Legend
+        cv2.circle(cvs, (750, 830), 4, turn_c, -1)
+        cv2.putText(cvs, "turn >90", (760, 833), cv2.FONT_HERSHEY_SIMPLEX, 0.35, turn_c, 1)
+        cv2.circle(cvs, (820, 830), 4, stop_c, -1)
+        cv2.putText(cvs, "stop >0.5s", (828, 833), cv2.FONT_HERSHEY_SIMPLEX, 0.35, stop_c, 1)
+
+        cv2.imwrite(str(out_dir / f"track_{team_name}_{pid}.jpg"), cvs)
 
     # Save stats JSON
     stats_path = Path(map_dir).parent / "trajectory" / f"stats_{team_name}.json"
