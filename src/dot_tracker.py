@@ -9,22 +9,23 @@ Team color ranges (HSV):
   purple: (130, 80, 60) - (160, 255, 255)
 """
 
-TEAM_COLORS_HSV = {
-    "white":  ((0, 0, 180), (180, 40, 255)),
-    "yellow": ((25, 80, 100), (35, 255, 255)),
-    "green":  ((40, 80, 60), (80, 255, 255)),
-    "red":    ((0, 100, 60), (10, 255, 255)),
-    "red2":   ((160, 100, 60), (180, 255, 255)),
-    "blue":   ((100, 100, 60), (130, 255, 255)),
-    "purple": ((130, 80, 60), (160, 255, 255)),
-}
-
 import cv2
+import json
+import logging
 import numpy as np
 from pathlib import Path
-import logging
 
 logger = logging.getLogger(__name__)
+
+TEAM_COLORS_HSV = {
+    "white":  ((0, 0, 160), (180, 50, 255)),
+    "yellow": ((20, 40, 80), (40, 255, 255)),
+    "green":  ((35, 30, 50), (85, 255, 255)),
+    "red":    ((0, 40, 50), (12, 255, 255)),
+    "red2":   ((158, 40, 50), (180, 255, 255)),
+    "blue":   ((95, 30, 50), (135, 255, 255)),
+    "purple": ((125, 30, 50), (165, 255, 255)),
+}
 
 
 def build_background(map_dir: Path, step: int = 10) -> np.ndarray:
@@ -260,6 +261,9 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
             pid = f"{team_color}_{tid}"
         named[pid] = pts
 
+    # Compute trajectory stats
+    stats = compute_trajectory_stats(named)
+
     # Draw individual trajectories
     if map_region:
         bgg = cv2.imread(map_region)
@@ -277,6 +281,11 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
                 for x, y, _ in pts[::20]:
                     cv2.circle(cvs, (int(x), int(y)), 7, c, 1)
                 cv2.imwrite(str(out_dir / f"track_{team_name}_{pid}.jpg"), cvs)
+
+    # Save stats JSON
+    stats_path = Path(map_dir).parent / "trajectory" / f"stats_{team_name}.json"
+    with open(stats_path, "w") as f:
+        json.dump(stats, f, indent=2, ensure_ascii=False, default=str)
 
     return named
 
@@ -331,6 +340,87 @@ def _identify_players_for_team(map_dir, trajectories, player_names):
                 break
 
     return player_ids
+
+
+def compute_trajectory_stats(trajectories: dict, fps: float = 59.94,
+                               frame_skip: int = 2) -> dict:
+    """Compute velocity and direction change events from trajectories.
+
+    Returns {player_id: {
+        'points': [(x, y, fn, speed, angle)],
+        'turns': [(fn, angle_change, from_angle, to_angle)], ...
+    }}
+    """
+    dt = frame_skip / fps  # seconds per extracted frame
+    SMOOTH_WINDOW = 5  # frames for moving average
+    ANGLE_THRESHOLD = 60  # degrees for turn detection
+
+    result = {}
+    for pid, pts in trajectories.items():
+        if len(pts) < SMOOTH_WINDOW + 3:
+            continue
+
+        # Smooth with moving average
+        xs_raw = np.array([p[0] for p in pts])
+        ys_raw = np.array([p[1] for p in pts])
+        kernel = np.ones(SMOOTH_WINDOW) / SMOOTH_WINDOW
+        xs = np.convolve(xs_raw, kernel, mode='valid')
+        ys = np.convolve(ys_raw, kernel, mode='valid')
+
+        points = []
+        turns = []
+        prev_angle = None
+
+        for i in range(len(xs)):
+            x, y = float(xs[i]), float(ys[i])
+            fn = pts[i + SMOOTH_WINDOW//2][2]
+
+            if i == 0:
+                speed, angle = 0.0, None
+            else:
+                dx = x - xs[i-1]
+                dy = y - ys[i-1]
+                speed = np.sqrt(dx*dx + dy*dy) / dt
+                angle = np.arctan2(dy, dx)
+
+                if prev_angle is not None and angle is not None:
+                    diff = angle - prev_angle
+                    diff = (diff + np.pi) % (2 * np.pi) - np.pi
+                    if abs(diff) > np.radians(ANGLE_THRESHOLD):
+                        turns.append({
+                            "frame": fn,
+                            "angle_change_deg": round(np.degrees(diff), 1),
+                            "from_angle_deg": round(np.degrees(prev_angle), 1),
+                            "to_angle_deg": round(np.degrees(angle), 1),
+                            "x": round(x, 1), "y": round(y, 1),
+                        })
+                prev_angle = angle
+
+            points.append({
+                "x": round(x, 1), "y": round(y, 1), "frame": fn,
+                "speed": round(speed, 1),
+                "angle_deg": round(np.degrees(angle), 1) if angle is not None else None,
+            })
+
+        avg_speed = np.mean([p["speed"] for p in points[1:]])
+        max_speed = max((p["speed"] for p in points[1:]), default=0)
+        total_distance = sum(
+            np.sqrt((xs[i]-xs[i-1])**2 + (ys[i]-ys[i-1])**2)
+            for i in range(1, len(xs))
+        )
+
+        result[pid] = {
+            "points": points,
+            "turns": turns,
+            "summary": {
+                "avg_speed": round(avg_speed, 1),
+                "max_speed": round(max_speed, 1),
+                "total_distance": round(total_distance, 1),
+                "num_turns": len(turns),
+            },
+        }
+
+    return result
 
 
 def draw_trajectories(map_region_path: str, trajectories: dict,
