@@ -195,9 +195,19 @@ class GameAnalyzer:
 
         summary = self._build_summary(frame_data, events)
 
-        # Filter eliminated→any and export CSV
+        # Valid state transitions
+        VALID_TRANSITIONS = {
+            ("alive", "knocked"),
+            ("knocked", "alive"),
+            ("knocked", "defeated"),
+            ("defeated", "alive"),
+            ("alive", "eliminated"),     # last alive, no teammates
+            ("knocked", "eliminated"),   # teammates eliminated
+            ("defeated", "eliminated"),  # timeout or teammates eliminated
+        }
         clean = [e for e in events
-                 if not (e.get("from") == "eliminated" and e["type"] == "player_status")]
+                 if e["type"] != "player_status"
+                 or (e.get("from"), e.get("to")) in VALID_TRANSITIONS]
         self._export_csv(clean, view_dir)
 
         return {"frame_data": frame_data, "events": clean, "summary": summary}
