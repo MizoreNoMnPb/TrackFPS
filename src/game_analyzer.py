@@ -194,7 +194,44 @@ class GameAnalyzer:
             })
 
         summary = self._build_summary(frame_data, events)
-        return {"frame_data": frame_data, "events": events, "summary": summary}
+
+        # Filter eliminated→any and export CSV
+        clean = [e for e in events
+                 if not (e.get("from") == "eliminated" and e["type"] == "player_status")]
+        self._export_csv(clean, view_dir)
+
+        return {"frame_data": frame_data, "events": clean, "summary": summary}
+
+    def _export_csv(self, events: list, view_dir: str):
+        """Export events to CSV with player names from teams.json."""
+        import csv
+        out = Path(view_dir) / "events.csv"
+        fps = 59.94
+
+        # Load player order from teams config
+        player_names = {}
+        if self._teams_config:
+            for t in self._teams_config["teams"]:
+                player_names[t["color"]] = t["players"]
+
+        with open(out, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["frame", "video_time", "game_time", "type",
+                        "team", "player", "from_status", "to_status"])
+            for e in events:
+                fn = e.get("frame", "")
+                vs = int(int(fn.replace("frame_", "")) / fps) if fn else 0
+                w.writerow([
+                    fn,
+                    f"{vs//60}:{vs%60:02d}",
+                    e.get("game_time_str", ""),
+                    e.get("type", ""),
+                    f'{e.get("team_name","")}({e.get("team_color","")})',
+                    player_names.get(e.get("team_color",""), ["?","?","?"])[e.get("player_idx",0)]
+                    if e.get("player_idx") is not None else "",
+                    e.get("from", ""),
+                    e.get("to", ""),
+                ])
 
     # ================================================================
     # Temporal smoothing & ranking debounce
