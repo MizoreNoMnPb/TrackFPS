@@ -84,39 +84,84 @@ class DotTracker:
         return result
 
 
+# Synthetic 14×14 filled circle template for verification
+_CIRCLE_TMPL = np.zeros((14, 14), dtype=np.float32)
+cv2.circle(_CIRCLE_TMPL, (7, 7), 7, 1.0, -1)  # filled circle r=7
+
+
+def _is_valid_dot(patch_bgr):
+    """Verify a 14×14 patch is a filled colored circle (player dot).
+
+    Checks:
+    1. Template match against perfect circle (shape)
+    2. Low variance inside the circle area (uniform fill)
+    3. Sharp edge at circle boundary (contrast with map bg)
+    """
+    if patch_bgr.shape[0] < 14 or patch_bgr.shape[1] < 14:
+        return False
+
+    gray = cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    gray_norm = gray / 255.0
+
+    # Template match with perfect circle
+    score = cv2.matchTemplate(gray_norm, _CIRCLE_TMPL, cv2.TM_CCOEFF_NORMED)[0, 0]
+    if score < 0.4:
+        return False
+
+    # Variance inside circle (uniform fill)
+    inside = gray_norm[_CIRCLE_TMPL > 0]
+    inside_std = inside.std() if len(inside) > 0 else 1.0
+    if inside_std > 0.25:
+        return False
+
+    return True
+
+
 def detect_dots(frame, color_lower, color_upper):
     h, w = frame.shape[:2]
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     color_mask = cv2.inRange(hsv, np.array(color_lower, np.uint8),
                              np.array(color_upper, np.uint8))
-    circles = cv2.HoughCircles(color_mask, cv2.HOUGH_GRADIENT, dp=1, minDist=15,
+    circles = cv2.HoughCircles(color_mask, cv2.HOUGH_GRADIENT, dp=1, minDist=10,
                                param1=50, param2=12, minRadius=5, maxRadius=9)
     if circles is None:
         return []
     circles = np.uint16(np.around(circles))[0]
-    dots = []
+
+    # Score each dot candidate
+    candidates = []
     for x, y, r in circles:
-        if x < 15 or y < 15 or x > w - 15 or y > h - 15:
+        if x < 10 or y < 10 or x > w - 10 or y > h - 10:
             continue
         patch = frame[y-7:y+7, x-7:x+7]
-        if patch.size == 0:
+        if patch.shape[0] < 14 or patch.shape[1] < 14:
             continue
+
+        # Quick color check
         patch_hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
         patch_color = cv2.inRange(patch_hsv, np.array(color_lower, np.uint8),
                                   np.array(color_upper, np.uint8))
-        if (patch_color > 0).sum() / patch_color.size > 0.25:
-            dots.append((int(x), int(y)))
+        color_ratio = (patch_color > 0).sum() / patch_color.size
+        if color_ratio < 0.2:
+            continue
+
+        # Shape verification
+        if _is_valid_dot(patch):
+            candidates.append((int(x), int(y)))
+
+    # Deduplicate nearby dots
     unique = []
-    for x, y in dots:
+    for x, y in candidates:
         if not any(abs(x - ux) < 10 and abs(y - uy) < 10 for ux, uy in unique):
             unique.append((x, y))
     return unique[:5]
 
 
-def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple,
-               max_gap: int = 5, max_dist: float = 80.0) -> dict:
+def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple) -> dict:
+    """Per-frame detection, sorted by x-coordinate for labeling P0/P1/P2."""
     paths = sorted(map_dir.glob("frame_*.jpg"))
-    tracker = DotTracker(max_gap=max_gap, max_dist=max_dist)
+
+    trajectories = {0: [], 1: [], 2: []}
 
     for fi, fp in enumerate(paths):
         frame = cv2.imread(str(fp))
@@ -124,16 +169,19 @@ def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple,
             continue
         fn = int(fp.stem.replace("frame_", ""))
         dots = detect_dots(frame, color_lower, color_upper)
-        tracker.update(dots, fn)
+        if len(dots) < 2:  # need at least 2 for meaningful sort
+            continue
+        dots.sort(key=lambda d: d[0])  # sort by x
+        for i in range(min(3, len(dots))):
+            trajectories[i].append((dots[i][0], dots[i][1], fn))
 
-    traj = tracker.get_trajectories()
     result = {}
-    for tid, pts in traj.items():
+    for tid, pts in trajectories.items():
         if len(pts) < 50:
             continue
         dx = pts[-1][0] - pts[0][0]
         dy = pts[-1][1] - pts[0][1]
-        if np.sqrt(dx*dx + dy*dy) > 10:
+        if np.sqrt(dx*dx + dy*dy) > 5:
             result[tid] = pts
     return result
 
