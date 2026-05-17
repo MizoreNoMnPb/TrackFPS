@@ -88,7 +88,7 @@ class GameAnalyzer:
         self._teams_config = None
         if teams_config:
             import json
-            with open(teams_config) as f:
+            with open(teams_config, encoding="utf-8") as f:
                 self._teams_config = json.load(f)
             logger.info(f"Loaded teams config: {len(self._teams_config['teams'])} teams")
 
@@ -305,7 +305,7 @@ class GameAnalyzer:
             for t in self._teams_config["teams"]:
                 player_names[t["color"]] = t["players"]
 
-        with open(out, "w", newline="") as f:
+        with open(out, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(["frame", "video_time", "game_time", "type",
                         "team", "player", "detail", "extra"])
@@ -653,7 +653,7 @@ def analyze_all_views(output_dir: str = "output",
                 logger.info(f"Analyzing {view_path}")
                 result = analyzer.analyze_view(view_path)
                 out_path = view_dir / "game_analysis.json"
-                with open(out_path, "w") as f:
+                with open(out_path, "w", encoding="utf-8") as f:
                     json.dump(result, f, indent=2, ensure_ascii=False, default=str)
                 key = f"{map_dir.name}/{game_dir.name}/{view_dir.name}"
                 results[key] = result

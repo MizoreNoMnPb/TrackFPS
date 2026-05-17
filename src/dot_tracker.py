@@ -385,7 +385,7 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
 
     # Save stats JSON
     stats_path = Path(map_dir).parent / "trajectory" / f"stats_{team_name}.json"
-    with open(stats_path, "w") as f:
+    with open(stats_path, "w", encoding="utf-8") as f:
         json.dump(stats, f, indent=2, ensure_ascii=False, default=str)
 
     return named

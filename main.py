@@ -32,7 +32,7 @@ def main():
 
     setup_logging()
 
-    with open(args.config) as f:
+    with open(args.config, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     # Video path
@@ -50,7 +50,7 @@ def main():
 
     # Load team data
     teams_cfg = cfg.get("teams_config", "config/teams.json")
-    with open(teams_cfg) as f:
+    with open(teams_cfg, encoding="utf-8") as f:
         teams = json.load(f)["teams"]
 
     # Output root

@@ -24,7 +24,7 @@ _knock_icons = {}  # loaded templates
 
 def load_teams(config_path: str = "config/teams.json"):
     global KNOWN_NAMES, TEAM_COLORS, PLAYER_TEAMS, _knock_icons
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         data = json.load(f)
     for t in data["teams"]:
         TEAM_COLORS[t["name"]] = t["color"]
@@ -154,7 +154,7 @@ def scan_view(view_dir: str) -> list[dict]:
         logger.warning(f"No game_analysis.json in {view_dir}")
         return []
 
-    with open(analysis_path) as f:
+    with open(analysis_path, encoding="utf-8") as f:
         data = json.load(f)
 
     game_dir = Path(view_dir) / "game"
@@ -257,7 +257,7 @@ def scan_all_views(output_dir: str = "output",
                     continue
                 vp = str(view_dir)
                 events = scan_view(vp)
-                with open(view_dir / "killfeed_events.json", "w") as f:
+                with open(view_dir / "killfeed_events.json", "w", encoding="utf-8") as f:
                     json.dump(events, f, indent=2, ensure_ascii=False, default=str)
                 results[f"{map_dir.name}/{game_dir.name}/{view_dir.name}"] = events
     return results

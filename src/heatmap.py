@@ -104,7 +104,7 @@ def generate_per_player_heatmaps(view_dir: str, team_name: str):
         logger.warning(f"No stats for {team_name} in {view_dir}")
         return
 
-    with open(stats_path) as f:
+    with open(stats_path, encoding="utf-8") as f:
         stats = json.load(f)
 
     for pid, data in stats.items():
