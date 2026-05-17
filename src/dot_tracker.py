@@ -305,14 +305,36 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
         for x, y, _ in pts[::20]:
             cv2.circle(cvs, (int(x), int(y)), 7, team_c, 1)
 
-        # Mark significant turns (>90°) from stats
+        # Mark significant turns with direction arrows
         if pid in stats:
+            drawn_turns = []
             for turn in stats[pid]["turns"]:
                 if abs(turn["angle_change_deg"]) > 90:
-                    cv2.circle(cvs, (int(turn["x"]), int(turn["y"])), 10, turn_c, 2)
+                    # Merge nearby turns
+                    tx, ty = turn["x"], turn["y"]
+                    merged = False
+                    for dt_data in drawn_turns:
+                        if abs(tx - dt_data["x"]) < 15 and abs(ty - dt_data["y"]) < 15:
+                            merged = True; break
+                    if merged:
+                        continue
+                    drawn_turns.append(turn)
 
-            # Mark stops (speed < 2 px/s sustained for >0.5s = ~15 frames)
+                    # Draw arrow showing the turn direction
+                    from_rad = np.radians(turn["from_angle_deg"])
+                    to_rad = np.radians(turn["to_angle_deg"])
+                    # Arc from from_angle to to_angle
+                    cv2.ellipse(cvs, (int(tx), int(ty)), (18, 18), 0,
+                                -turn["from_angle_deg"], -turn["to_angle_deg"],
+                                turn_c, 2)
+                    # Arrow head at to_angle
+                    ax = int(tx + 18 * np.cos(to_rad))
+                    ay = int(ty + 18 * np.sin(to_rad))
+                    cv2.circle(cvs, (ax, ay), 3, turn_c, -1)
+
+            # Mark stops: merge nearby, draw duration
             pts_list = stats[pid]["points"]
+            stops = []
             stop_start = None
             for i, p in enumerate(pts_list):
                 if p["speed"] < 2:
@@ -321,12 +343,25 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
                 else:
                     if stop_start is not None and (i - stop_start) * dt > 0.5:
                         mid = (stop_start + i) // 2
-                        cv2.circle(cvs, (int(pts_list[mid]["x"]), int(pts_list[mid]["y"])),
-                                   12, stop_c, 2)
-                        cv2.putText(cvs, f'{((i-stop_start)*dt):.1f}s',
-                                    (int(pts_list[mid]["x"])+15, int(pts_list[mid]["y"])),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, stop_c, 1)
+                        stops.append({"x": pts_list[mid]["x"], "y": pts_list[mid]["y"],
+                                      "dur": (i - stop_start) * dt})
                     stop_start = None
+            if stop_start is not None and (len(pts_list) - stop_start) * dt > 0.5:
+                mid = (stop_start + len(pts_list) - 1) // 2
+                stops.append({"x": pts_list[mid]["x"], "y": pts_list[mid]["y"],
+                              "dur": (len(pts_list) - stop_start) * dt})
+
+            # Merge nearby stops
+            merged_stops = []
+            for s in stops:
+                if not any(abs(s["x"] - ms["x"]) < 15 and abs(s["y"] - ms["y"]) < 15
+                          for ms in merged_stops):
+                    merged_stops.append(s)
+            for s in merged_stops:
+                cv2.circle(cvs, (int(s["x"]), int(s["y"])), 12, stop_c, 2)
+                cv2.putText(cvs, f'{s["dur"]:.1f}s',
+                            (int(s["x"]) + 15, int(s["y"])),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, stop_c, 1)
 
         # Label: TeamName | PlayerName in bottom-left
         label = f"{team_name} | {pid}"
