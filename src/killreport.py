@@ -121,11 +121,18 @@ def parse_event(lines: list[str], roi: np.ndarray = None) -> dict | None:
         return None
 
     p1, p2 = found_players[0], found_players[1]
-    t1 = found_teams[0] if found_teams else PLAYER_TEAMS.get(p1, '?')
-    t2 = found_teams[1] if len(found_teams) > 1 else PLAYER_TEAMS.get(p2, '?')
+    # Team comes from PLAYER_TEAMS (authoritative), fallback to OCR team names
+    t1 = PLAYER_TEAMS.get(p1, found_teams[0] if found_teams else '?')
+    t2 = PLAYER_TEAMS.get(p2, found_teams[1] if len(found_teams) > 1 else '?')
 
     # Determine event type
-    if t1 == t2:
+    same_team = (t1 == t2) or (p1 in PLAYER_TEAMS and p2 in PLAYER_TEAMS
+                               and PLAYER_TEAMS[p1] == PLAYER_TEAMS[p2])
+    same_player = (p1 == p2)
+
+    if same_player:
+        etype = "invalid"  # OCR misread: same player can't act on themselves
+    elif same_team:
         etype = "rescue"
     elif "wipeout" in full.lower():
         etype = "wipeout"
