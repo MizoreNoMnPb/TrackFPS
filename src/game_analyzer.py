@@ -104,7 +104,12 @@ class GameAnalyzer:
             b = 255 - b
         s = cv2.resize(b, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
         import pytesseract, re
-        text = pytesseract.image_to_string(s, lang='eng', config='--psm 11').strip()
+        try:
+            text = pytesseract.image_to_string(s, lang='eng', config='--psm 11').strip()
+        except pytesseract.TesseractNotFoundError:
+            logger.warning("Tesseract not found. Windows: set pytesseract.pytesseract.tesseract_cmd "
+                           "= r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'")
+            return None
         for line in text.split():
             m = re.search(r'(\d{1,2}):?(\d{2})', line)
             if m:
