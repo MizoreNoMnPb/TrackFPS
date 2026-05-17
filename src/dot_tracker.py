@@ -1,135 +1,69 @@
-"""Track player dots: HoughCircles detection + greedy nearest-neighbor matching."""
+"""Track player dots: median background subtraction + HoughCircles + x-sort."""
 
 import cv2
 import numpy as np
 from pathlib import Path
-from collections import deque
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class DotTracker:
-    """Track dots with greedy nearest-neighbor matching."""
-
-    def __init__(self, max_gap: int = 5, max_dist: float = 80.0):
-        self.max_gap = max_gap
-        self.max_dist = max_dist
-        self.tracks = {}  # id -> deque of (x, y, frame_num)
-        self.next_id = 0
-        self._gaps = {}   # id -> consecutive misses
-
-    def update(self, dets: list, frame_num: int):
-        """Update tracks. dets = [(x, y), ...]."""
-        if not dets:
-            for tid in list(self._gaps.keys()):
-                self._gaps[tid] += 1
-                if self._gaps[tid] > self.max_gap:
-                    del self.tracks[tid]
-                    del self._gaps[tid]
-            return
-
-        # Predict current positions (linear extrapolation from last 2 points)
-        predicted = {}
-        for tid, pts in self.tracks.items():
-            if len(pts) >= 2:
-                dx = pts[-1][0] - pts[-2][0]
-                dy = pts[-1][1] - pts[-2][1]
-                predicted[tid] = (pts[-1][0] + dx, pts[-1][1] + dy)
-            elif len(pts) == 1:
-                predicted[tid] = (pts[-1][0], pts[-1][1])
-
-        # Greedy matching: nearest neighbor
-        matched_dets = set()
-        matched_trks = set()
-        for tid, (px, py) in sorted(predicted.items(),
-                                     key=lambda x: len(self.tracks[x[0]]),
-                                     reverse=True):
-            best_d = float('inf')
-            best_i = -1
-            for i, (dx, dy) in enumerate(dets):
-                if i in matched_dets:
-                    continue
-                d = np.sqrt((dx - px)**2 + (dy - py)**2)
-                if d < best_d and d < self.max_dist:
-                    best_d = d
-                    best_i = i
-            if best_i >= 0:
-                matched_dets.add(best_i)
-                matched_trks.add(tid)
-                self.tracks[tid].append((dets[best_i][0], dets[best_i][1], frame_num))
-                self._gaps[tid] = 0
-
-        # Increment gaps for unmatched tracks
-        for tid in list(predicted.keys()):
-            if tid not in matched_trks:
-                self._gaps[tid] = self._gaps.get(tid, 0) + 1
-                if self._gaps[tid] > self.max_gap:
-                    del self.tracks[tid]
-                    del self._gaps[tid]
-
-        # Create new tracks for unmatched dets
-        for i in range(len(dets)):
-            if i not in matched_dets:
-                tid = self.next_id
-                self.next_id += 1
-                self.tracks[tid] = deque([(dets[i][0], dets[i][1], frame_num)])
-                self._gaps[tid] = 0
-
-    def get_trajectories(self) -> dict:
-        result = {}
-        for tid, pts in self.tracks.items():
-            if len(pts) > 0:
-                result[tid] = [(x, y, fn) for x, y, fn in pts]
-        return result
+def build_background(map_dir: Path, step: int = 10) -> np.ndarray:
+    """Build median background from map frames (static map, no scrolling)."""
+    paths = sorted(map_dir.glob("frame_*.jpg"))
+    frames = [cv2.imread(str(paths[i])) for i in range(0, len(paths), step)
+              if cv2.imread(str(paths[i])) is not None]
+    return np.median(frames, axis=0).astype(np.uint8)
 
 
-def _is_valid_dot(patch_bgr):
-    """Lightweight dot verification — checks the 14×14 patch is mostly team color."""
-    if patch_bgr.shape[0] < 10 or patch_bgr.shape[1] < 10:
-        return False
-    return True
-
-
-def detect_dots(frame, color_lower, color_upper):
+def detect_dots(frame, bg, color_lower, color_upper):
+    """Detect player dots: foreground (diff from bg) + HoughCircles + color."""
     h, w = frame.shape[:2]
+
+    # Foreground = current frame - median background
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    bg_gray = cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY)
+    diff = cv2.absdiff(gray, bg_gray)
+    _, fg = cv2.threshold(diff, 20, 255, cv2.THRESH_BINARY)
+    fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN,
+                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)))
+
+    # Only consider fg pixels with the right color
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     color_mask = cv2.inRange(hsv, np.array(color_lower, np.uint8),
                              np.array(color_upper, np.uint8))
-    circles = cv2.HoughCircles(color_mask, cv2.HOUGH_GRADIENT, dp=1, minDist=10,
-                               param1=50, param2=12, minRadius=5, maxRadius=9)
+    fg_color = fg & color_mask
+
+    # HoughCircles on foreground color mask
+    circles = cv2.HoughCircles(fg_color, cv2.HOUGH_GRADIENT, dp=1, minDist=10,
+                               param1=40, param2=10, minRadius=5, maxRadius=9)
     if circles is None:
         return []
+
     circles = np.uint16(np.around(circles))[0]
-
-    # Score each dot candidate
-    candidates = []
+    dots = []
     for x, y, r in circles:
-        if x < 10 or y < 10 or x > w - 10 or y > h - 10:
+        if x < 20 or y < 20 or x > w - 20 or y > h - 20:
             continue
-        patch = frame[y-7:y+7, x-7:x+7]
-        if patch.shape[0] < 10 or patch.shape[1] < 10:
+        # Verify blob area in fg_color matches expected dot size
+        patch = fg_color[y-8:y+8, x-8:x+8]
+        fg_area = (patch > 0).sum()
+        if fg_area < 80:  # real 14x14 dot has ~120-180 fg pixels
             continue
+        dots.append((int(x), int(y)))
 
-        # Color check
-        patch_hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
-        patch_color = cv2.inRange(patch_hsv, np.array(color_lower, np.uint8),
-                                  np.array(color_upper, np.uint8))
-        color_ratio = (patch_color > 0).sum() / patch_color.size
-        if color_ratio > 0.25:
-            candidates.append((int(x), int(y)))
-
-    # Deduplicate nearby dots
+    # Deduplicate nearby
     unique = []
-    for x, y in candidates:
+    for x, y in dots:
         if not any(abs(x - ux) < 10 and abs(y - uy) < 10 for ux, uy in unique):
             unique.append((x, y))
     return unique[:5]
 
 
 def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple) -> dict:
-    """Per-frame detection, sorted by x-coordinate for labeling P0/P1/P2."""
+    """Per-frame detection + x-sort labeling."""
     paths = sorted(map_dir.glob("frame_*.jpg"))
+    bg = build_background(map_dir)
 
     trajectories = {0: [], 1: [], 2: []}
 
@@ -138,10 +72,8 @@ def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple) -> dict:
         if frame is None:
             continue
         fn = int(fp.stem.replace("frame_", ""))
-        dots = detect_dots(frame, color_lower, color_upper)
-        if len(dots) < 2:  # need at least 2 for meaningful sort
-            continue
-        dots.sort(key=lambda d: d[0])  # sort by x
+        dots = detect_dots(frame, bg, color_lower, color_upper)
+        dots.sort(key=lambda d: d[0])
         for i in range(min(3, len(dots))):
             trajectories[i].append((dots[i][0], dots[i][1], fn))
 
@@ -163,10 +95,9 @@ def draw_trajectories(map_region_path: str, trajectories: dict,
         bg = np.zeros((map_h, map_w, 3), dtype=np.uint8)
     else:
         bg = cv2.resize(bg, (map_w, map_h))
-    colors = [(0, 255, 0), (255, 255, 0), (0, 255, 255),
-              (255, 0, 255), (0, 128, 255), (255, 128, 0)]
+    colors = [(0, 255, 0), (255, 255, 0), (0, 255, 255)]
     for ti, (tid, pts) in enumerate(trajectories.items()):
-        c = colors[ti % len(colors)]
+        c = colors[ti % 3]
         for j in range(1, len(pts)):
             cv2.line(bg, (int(pts[j-1][0]), int(pts[j-1][1])),
                      (int(pts[j][0]), int(pts[j][1])), c, 2)
