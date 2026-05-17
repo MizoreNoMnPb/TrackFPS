@@ -104,7 +104,7 @@ class GameAnalyzer:
             b = 255 - b
         s = cv2.resize(b, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
         import pytesseract, re
-        text = pytesseract.image_to_string(s, lang='eng', config='--psm 6').strip()
+        text = pytesseract.image_to_string(s, lang='eng', config='--psm 11').strip()
         for line in text.split():
             m = re.search(r'(\d{1,2}):?(\d{2})', line)
             if m:
@@ -116,39 +116,48 @@ class GameAnalyzer:
 
     @classmethod
     def _build_global_timer_map(cls, output_base: Path):
-        """Build a single global timer map from ALL views of a game.
-        The game timer counts down linearly across the entire match.
+        """Build a single global timer map from key frames across all views.
+        Uses mid-view frames (most reliable OCR) for clean reference points.
         """
-        import re, pytesseract
         all_refs = []
         for view_dir in sorted(output_base.glob("View*")):
             game_dir = view_dir / "game"
             paths = sorted(game_dir.glob("frame_*.jpg"))
             n = len(paths)
             if n < 10: continue
-            for i in np.linspace(int(n * 0.15), n - 1, 15, dtype=int):
-                frame = cv2.imread(str(paths[i]))
+            # Take 3 frames: 25%, 50%, 75% through the view
+            for frac in [0.25, 0.5, 0.75]:
+                idx = int(n * frac)
+                frame = cv2.imread(str(paths[idx]))
                 t = GameAnalyzer._ocr_timer_sec(frame)
                 if t is not None:
-                    all_refs.append((int(paths[i].stem.replace("frame_", "")), t))
+                    all_refs.append((int(paths[idx].stem.replace("frame_", "")), t))
 
-        if len(all_refs) < 5:
+        if len(all_refs) < 4:
             return
 
         all_refs.sort()
-        # Clean: monotonically decreasing
-        clean = [all_refs[0]]
-        for fn, t in all_refs[1:]:
-            if t <= clean[-1][1] + 3:
-                clean.append((fn, t))
+        # Clean: remove outliers (>30s from median trend)
+        rf = np.array([x[0] for x in all_refs])
+        rt = np.array([x[1] for x in all_refs])
+        # RANSAC-like: try all pairs, pick the one with most inliers
+        best_inliers = []
+        for i in range(len(all_refs)):
+            for j in range(i + 1, len(all_refs)):
+                s = (rt[j] - rt[i]) / (rf[j] - rf[i]) if rf[j] != rf[i] else 0
+                ic = rt[i] - s * rf[i]
+                inliers = [(fn, t) for fn, t in all_refs
+                           if abs(t - (s * fn + ic)) < 10]  # within 10s
+                if len(inliers) > len(best_inliers):
+                    best_inliers = inliers
 
-        if len(clean) >= 3:
-            rf = np.array([x[0] for x in clean])
-            rt = np.array([x[1] for x in clean])
-            slope, intercept = np.polyfit(rf, rt, 1)
+        if len(best_inliers) >= 3:
+            rf2 = np.array([x[0] for x in best_inliers])
+            rt2 = np.array([x[1] for x in best_inliers])
+            slope, intercept = np.polyfit(rf2, rt2, 1)
             cls._global_timer_slope = slope
             cls._global_timer_intercept = intercept
-            logger.info(f"Global timer: {len(clean)} refs across all views")
+            logger.info(f"Global timer: {len(best_inliers)}/{len(all_refs)} inliers")
 
     def analyze_view(self, view_dir: str) -> dict:
         game_dir = Path(view_dir) / "game"
