@@ -1,5 +1,7 @@
 # TrackFPS — FPS Game Minimap Player Trajectory Extraction
 
+[中文文档](doc/README_CN.md)
+
 Extracts and analyzes player movement trajectories from FPS game minimap footage (1080p60fps). Tracks 3-player squads across 6 teams, detects game events (knocks, kills, rescues, eliminations), and generates annotated trajectory maps with speed heatmaps.
 
 ## Pipeline
