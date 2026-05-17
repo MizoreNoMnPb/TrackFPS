@@ -2,17 +2,59 @@
 
 [中文文档](doc/README_CN.md)
 
-Extracts player trajectories from FPS game minimap footage (1080p60fps). Built on EasyOCR + OpenCV-Python. No deep learning due to VRAM/time constraints.
+Extracts player trajectories from FPS game minimap footage (1080p60fps). Built on EasyOCR + OpenCV-Python. No deep learning methods due to VRAM and time constraints.
 
-> For best results, use the high-bitrate video source from Bilibili: [BaiduPan](https://pan.baidu.com/s/19zYqO1Wo7dG0KjOlXZJzag?pwd=TOTK) code: TOTK.
-> View 2 of Brakkesh_Game2 corresponds to the segment referenced in the original task document.
+> For best detection results, use the high-bitrate video source from Bilibili: [BaiduPan](https://pan.baidu.com/s/19zYqO1Wo7dG0KjOlXZJzag?pwd=TOTK) passcode: TOTK.
+> View 2 of Brakkesh_Game2 contains the segment described in the original task document.
 
-## Setup
+## Notes
+
+This project uses map assets from the game wiki and icons captured from the video for detection assistance. All resources can be found under `./assets/`.
+
+## Pipeline
+
+```
+Video → Viewport Detection → Frame Extraction → Map Dot Tracking → Event Detection → Output
+```
+
+### 1. Viewport Detection (`map_extractor.py`)
+
+Scans the video for segments where the minimap overlay is visible, then crops the game view and map view separately. Results are saved to `output/{MapName}/Game{N}/View{M}/`.
+
+### 2. Map Dot Tracking (`dot_tracker.py`)
+
+Extracts trajectory and heading information from the map view. Method:
+
+Median background subtraction (using the map region corresponding to the current viewport) + HoughCircles circle detection + color filtering. Player dots on the minimap are ~14×14 pixel circles. Player identification uses OCR + fuzzy matching on the 98×20px name label positioned 20px above each dot's center. Greedy nearest-neighbor matching across frames ensures smooth trajectories and filters false positives.
+
+Output in `output/{MapName}/Game{N}/View{M}/trajectory/`: speed heatmaps, trajectory maps (with turn and stop annotations), and per-player stats in `stats_{Team}.json`.
+
+### 3. Game UI Analysis (`game_analyzer.py`)
+
+Processes the game view UI and the top-right kill feed to extract match events.
+
+Game UI: reads the left-side team table (6 rows × 3 players). Team color bars use hue histogram peak detection. Player status uses 7×9 template matching (alive/knocked/defeated/eliminated). Center timer OCR (Tesseract PSM 11) provides global game clock alignment.
+
+Kill feed: detects top-right kill notifications at (546,44) 447×18px. Frame differencing near status change frames + EasyOCR with edit-distance fuzzy matching against known team and player names.
+
+## Key Challenges
+
+- **Map noise**: Roads and labels resemble player dots. Median background subtraction + foreground area filtering.
+- **Color classification**: Semi-transparent team color bars suffer from game background bleed. 15-frame temporal smoothing + majority voting + RANSAC outlier rejection.
+- **Player identification**: 98×20px name label OCR. Fuzzy edit-distance matching + elimination fallback for unidentified tracks.
+
+## Unsolved Issues
+
+- **Visual-only matching has inherent limits**. For example, dot tracking works well only for the white team (INK) in the given segment. When many players cluster in one area or the map viewport is too large, trajectories become unreliable.
+- **Video resolution limits template matching**. At 1080p split-screen, player status icons in the UI are only 7×9px, and kill feed text is only 18px tall — extremely difficult for OCR or template matching. The current approach uses UI + kill feed dual validation to compensate.
+- **Semi-transparent UI causes information loss**. Many UI elements are semi-transparent and overlap directly (e.g., name labels above map dots). When multiple teams fight at close range, overlapping labels make player identification impossible. I chose to provide correct team data via `config/teams.json`; an OCR-based approach is available as an alternative.
+
+## Environment
 
 Requires conda and tesseract:
 
 ```bash
-# System packages
+# System package for OCR
 sudo apt install tesseract-ocr tesseract-ocr-chi-sim
 
 # Python environment
@@ -21,94 +63,59 @@ conda activate trackfps
 pip install -r requirements.txt
 ```
 
-Place video files in `input/Final/{MapName}_Game{N}.mp4` (e.g. `input/Final/Brakkesh_Game2.mp4`).
-
 ## Usage
 
 ```bash
 conda activate trackfps
 
-# First run — extract frames + analyze + track
+# First run
 python main.py
 
-# Subsequent runs — skip extraction
-python main.py --track-only
-
-# Custom config or video
-python main.py -c config/custom.yaml -v input/Final/Dum_Game1.mp4
-
-# Extract only (no analysis)
-python main.py --extract-only
+# Subsequent runs
+python main.py --extract-only                     # extraction only
+python main.py --track-only                       # skip extraction, analyze + track
+python main.py -c config/custom.yaml              # custom config
 ```
 
-## Pipeline
-
-```
-Video → Viewport Detection → Frame Extraction → Dot Tracking + UI Analysis → Output
-```
-
-### 1. Viewport Detection (`map_extractor.py`)
-
-Scans the video for minimap overlay segments (right side, map border at x=1008). Crops map (854×852) and game view (998×559). ORB feature matching + homography aligns the viewport with the reference map. Skips frames without visible timer (loading/inventory screens).
-
-### 2. Map Dot Tracking (`dot_tracker.py`)
-
-Median background subtraction (static map) + HoughCircles + color filter. Dots are ~14×14 circles. Greedy nearest-neighbor matching (max 30px/frame) for smooth trajectories. Player identification via OCR of 98×20px name labels above each dot (EasyOCR + fuzzy Levenshtein matching).
-
-Output in `output/{MapName}/Game{N}/View{M}/trajectory/`: individual trajectory maps (with turn/stop annotations), speed heatmaps, and `stats_{Team}.json` (speed, distance, turns).
-
-### 3. Game UI Analysis (`game_analyzer.py`)
-
-Reads the left-side team table (6 rows × 3 players) using hue histogram peak detection for team colors and 7×9 template matching for player status (alive/knocked/defeated/eliminated). Center timer OCR (Tesseract PSM 11) provides global game clock alignment via RANSAC-fit across all views.
-
-Kill feed detection at (546,44) 447×18px — frame differencing near status change frames, EasyOCR + fuzzy matching against known team/player names.
-
-## Key Challenges
-
-- **Map noise**: Roads/labels mimic player dots. Median background subtraction + foreground area filter (>100px).
-- **Color classification**: Semi-transparent team color bars bleed game background. 15-frame temporal smoothing + majority voting + RANSAC outlier rejection.
-- **Player identification**: 98×20px name label OCR. Fuzzy edit-distance matching + elimination fallback.
-- **UI scale**: Icons are only 7×9px and kill feed text is 18px tall at 1080p split-screen. Dual-validation (UI table + kill feed) compensates for OCR/template limitations.
-- **UI transparency**: Team-colored overlays merge when players cluster. Config files with known team data bypass OCR where needed.
-
-## Config
-
-`config/teams.json` — team colors, names, and player lists (3/team × 6 teams).
-
-`config/default.yaml`:
+## Config Reference (`config/default.yaml`)
 
 ```yaml
 input:
   video_path: "input/Final/Brakkesh_Game2.mp4"
-map_dir: "assets/map"                  # reference maps
-teams_config: "config/teams.json"      # team data
+
+map_dir: "assets/map"                  # reference map directory
+teams_config: "config/teams.json"      # team color, name, player list
+
 output:
   dir: "output"
+
 pipeline:
   skip_extraction: false               # true if frames already extracted
   analyze_ui: true                     # generate events.csv
   track_teams: "INK"                   # "all", "INK", or ["INK","ESG"]
+
 scanning:
-  scan_step: 300                       # check every N frames
-  min_segment_frames: 120              # min frames per view segment
+  scan_step: 300                       # check every N frames for map view
+  min_segment_frames: 120              # minimum frames per valid segment
+
 trajectory:
-  turn_threshold: 90                   # degrees for turn markers
-  stop_speed: 2                        # px/s below this = stopped
-  stop_min_duration: 0.5               # seconds minimum stop
+  turn_threshold: 90                   # degrees for marking turns
+  stop_speed: 2                        # px/s threshold for stopped
+  stop_min_duration: 0.5               # seconds minimum for stop annotation
 ```
 
 ## Output Structure
 
 ```
 output/{MapName}/Game{N}/View{M}/
-├── map/                    # Map crops (854×852)
-├── game/                   # Game view crops (998×559)
-├── map_region.png          # Reference map crop
+├── map/                    # Map crops
+├── game/                   # Game view crops
+├── map_region.png          # Reference map region
 ├── metadata.json           # Viewport coords, homography, frame range
 ├── game_analysis.json      # Per-frame UI state + event timeline
 ├── events.csv              # Human-readable event table
 └── trajectory/
-    ├── track_{Team}_{Player}.jpg     # Individual trajectory
+    ├── track_{Team}_{Player}.jpg     # Individual trajectory map
     ├── heatmap_{Team}_{Player}.jpg   # Speed heatmap
-    └── stats_{Team}.json             # Speed, turns, distance
+    └── stats_{Team}.json             # Speed, turns, distance stats
 ```
