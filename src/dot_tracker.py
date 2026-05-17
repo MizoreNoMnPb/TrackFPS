@@ -310,27 +310,22 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
             drawn_turns = []
             for turn in stats[pid]["turns"]:
                 if abs(turn["angle_change_deg"]) > 90:
-                    # Merge nearby turns
                     tx, ty = turn["x"], turn["y"]
-                    merged = False
-                    for dt_data in drawn_turns:
-                        if abs(tx - dt_data["x"]) < 15 and abs(ty - dt_data["y"]) < 15:
-                            merged = True; break
-                    if merged:
+                    if any(abs(tx-d["x"])<15 and abs(ty-d["y"])<15 for d in drawn_turns):
                         continue
                     drawn_turns.append(turn)
-
-                    # Draw arrow showing the turn direction
-                    from_rad = np.radians(turn["from_angle_deg"])
+                    # Thick arrow: draw as a triangle wedge
                     to_rad = np.radians(turn["to_angle_deg"])
-                    # Arc from from_angle to to_angle
-                    cv2.ellipse(cvs, (int(tx), int(ty)), (18, 18), 0,
-                                -turn["from_angle_deg"], -turn["to_angle_deg"],
-                                turn_c, 2)
-                    # Arrow head at to_angle
-                    ax = int(tx + 18 * np.cos(to_rad))
-                    ay = int(ty + 18 * np.sin(to_rad))
-                    cv2.circle(cvs, (ax, ay), 3, turn_c, -1)
+                    from_rad = np.radians(turn["from_angle_deg"])
+                    # Draw filled wedge for turn
+                    for r in [20, 14, 8]:
+                        pt1 = (int(tx + r * np.cos(from_rad)), int(ty + r * np.sin(from_rad)))
+                        pt2 = (int(tx + r * np.cos(to_rad)), int(ty + r * np.sin(to_rad)))
+                        cv2.line(cvs, pt1, pt2, turn_c, 2)
+                    # Arrow head
+                    ax = int(tx + 20 * np.cos(to_rad))
+                    ay = int(ty + 20 * np.sin(to_rad))
+                    cv2.circle(cvs, (ax, ay), 5, turn_c, -1)
 
             # Mark stops: merge nearby, draw duration
             pts_list = stats[pid]["points"]
@@ -370,6 +365,19 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
         cv2.rectangle(overlay, (5, 835 - th), (tw + 15, 847), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.5, cvs, 0.5, 0, cvs)
         cv2.putText(cvs, label, (10, 843), cv2.FONT_HERSHEY_SIMPLEX, 0.5, team_c, 1)
+
+        # Time markers every ~10s of video along trajectory
+        fps = 59.94
+        frame_skip = 2
+        last_marker_sec = -10
+        for x, y, fn in pts:
+            video_sec = fn / fps
+            if video_sec - last_marker_sec >= 10:
+                ts = f"{int(video_sec//60)}:{int(video_sec%60):02d}"
+                cv2.circle(cvs, (int(x), int(y)), 4, (255, 255, 255), -1)
+                cv2.putText(cvs, ts, (int(x) + 8, int(y) - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+                last_marker_sec = video_sec
 
         # Legend
         cv2.circle(cvs, (750, 830), 4, turn_c, -1)
