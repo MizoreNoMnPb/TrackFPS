@@ -314,18 +314,14 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
                     if any(abs(tx-d["x"])<15 and abs(ty-d["y"])<15 for d in drawn_turns):
                         continue
                     drawn_turns.append(turn)
-                    # Thick arrow: draw as a triangle wedge
-                    to_rad = np.radians(turn["to_angle_deg"])
-                    from_rad = np.radians(turn["from_angle_deg"])
-                    # Draw filled wedge for turn
-                    for r in [20, 14, 8]:
-                        pt1 = (int(tx + r * np.cos(from_rad)), int(ty + r * np.sin(from_rad)))
-                        pt2 = (int(tx + r * np.cos(to_rad)), int(ty + r * np.sin(to_rad)))
-                        cv2.line(cvs, pt1, pt2, turn_c, 2)
-                    # Arrow head
-                    ax = int(tx + 20 * np.cos(to_rad))
-                    ay = int(ty + 20 * np.sin(to_rad))
-                    cv2.circle(cvs, (ax, ay), 5, turn_c, -1)
+                    # Arc arrow: short arc with arrow head
+                    from_deg = turn["from_angle_deg"]
+                    to_deg = turn["to_angle_deg"]
+                    cv2.ellipse(cvs, (int(tx), int(ty)), (18, 18), 0,
+                                -from_deg, -to_deg, turn_c, 2)
+                    ax = int(tx + 18 * np.cos(np.radians(to_deg)))
+                    ay = int(ty + 18 * np.sin(np.radians(to_deg)))
+                    cv2.circle(cvs, (ax, ay), 4, turn_c, -1)
 
             # Mark stops: merge nearby, draw duration
             pts_list = stats[pid]["points"]
@@ -374,8 +370,8 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
             video_sec = fn / fps
             if video_sec - last_marker_sec >= 10:
                 ts = f"{int(video_sec//60)}:{int(video_sec%60):02d}"
-                cv2.circle(cvs, (int(x), int(y)), 4, (255, 255, 255), -1)
-                cv2.putText(cvs, ts, (int(x) + 8, int(y) - 8),
+                cv2.circle(cvs, (int(x), int(y)), 5, (255, 255, 255), -1)
+                cv2.putText(cvs, ts, (int(x) + 12, int(y) - 18),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
                 last_marker_sec = video_sec
 
