@@ -1,4 +1,23 @@
-"""Track player dots: median background subtraction + nearest-neighbor matching."""
+"""Track player dots: median background subtraction + nearest-neighbor matching.
+
+Team color ranges (HSV):
+  white:  (0, 0, 180) - (180, 40, 255)
+  yellow: (25, 80, 100) - (35, 255, 255)
+  green:  (40, 80, 60) - (80, 255, 255)
+  red:    (0, 100, 60) - (10, 255, 255) | (160, 100, 60) - (180, 255, 255)
+  blue:   (100, 100, 60) - (130, 255, 255)
+  purple: (130, 80, 60) - (160, 255, 255)
+"""
+
+TEAM_COLORS_HSV = {
+    "white":  ((0, 0, 180), (180, 40, 255)),
+    "yellow": ((25, 80, 100), (35, 255, 255)),
+    "green":  ((40, 80, 60), (80, 255, 255)),
+    "red":    ((0, 100, 60), (10, 255, 255)),
+    "red2":   ((160, 100, 60), (180, 255, 255)),
+    "blue":   ((100, 100, 60), (130, 255, 255)),
+    "purple": ((130, 80, 60), (160, 255, 255)),
+}
 
 import cv2
 import numpy as np
@@ -195,6 +214,120 @@ def _identify_players(map_dir, trajectories):
             if tid not in player_ids:
                 player_ids[tid] = missing.pop()
                 logger.info(f"  Track {tid} → {player_ids[tid]} (elimination)")
+                break
+
+    return player_ids
+
+
+def track_team(map_dir: Path, team_color: str, team_players: list[str],
+               team_name: str = "", map_region: str = None) -> dict:
+    """Track one team's dots and identify players.
+
+    Args:
+        map_dir: path to map frame directory
+        team_color: 'white', 'yellow', 'green', 'red', 'blue', or 'purple'
+        team_players: list of 3 player names (e.g. ['BabyB','Kilzal','tooEzze'])
+        map_region: path to map_region.png for drawing
+
+    Returns dict with player-named trajectories.
+    """
+    color_key = team_color if team_color != "red" else "red"
+    lo, hi = TEAM_COLORS_HSV[color_key]
+
+    traj = track_dots(map_dir, lo, hi)
+
+    # For red, also merge red2 range results
+    if team_color == "red":
+        lo2, hi2 = TEAM_COLORS_HSV["red2"]
+        traj2 = track_dots(map_dir, lo2, hi2)
+        # Merge trajectories (prefer longer ones)
+        for tid, pts in traj2.items():
+            if tid not in traj or len(pts) > len(traj[tid]):
+                traj[tid] = pts
+
+    # Keep only top 3 longest tracks (filter false positives)
+    sorted_tracks = sorted(traj.items(), key=lambda x: -len(x[1]))
+    traj = dict(sorted_tracks[:3])
+
+    # OCR identification with team-specific names
+    player_ids = _identify_players_for_team(map_dir, traj, set(team_players))
+    named = {}
+    for tid, pts in traj.items():
+        pid = player_ids.get(tid)
+        if pid and pid in named:
+            pid = f"{pid}_{tid}"
+        if pid is None:
+            pid = f"{team_color}_{tid}"
+        named[pid] = pts
+
+    # Draw individual trajectories
+    if map_region:
+        bgg = cv2.imread(map_region)
+        if bgg is not None:
+            bgg = cv2.resize(bgg, (854, 852))
+            colors = [(0, 255, 0), (255, 255, 0), (0, 255, 255)]
+            out_dir = Path(map_dir).parent / "trajectory"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            for i, (pid, pts) in enumerate(named.items()):
+                c = colors[i % 3]
+                cvs = bgg.copy()
+                for j in range(1, len(pts)):
+                    cv2.line(cvs, (int(pts[j-1][0]), int(pts[j-1][1])),
+                             (int(pts[j][0]), int(pts[j][1])), c, 2)
+                for x, y, _ in pts[::20]:
+                    cv2.circle(cvs, (int(x), int(y)), 7, c, 1)
+                cv2.imwrite(str(out_dir / f"track_{team_name}_{pid}.jpg"), cvs)
+
+    return named
+
+
+def _identify_players_for_team(map_dir, trajectories, player_names):
+    """OCR player names from labels, using team-specific known names."""
+    try:
+        import easyocr
+        reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+    except ImportError:
+        return {}
+
+    player_ids = {}
+    for tid, pts in trajectories.items():
+        for frac in [0.5, 0.25, 0.75]:
+            idx = int(len(pts) * frac)
+            mx, my, mfn = pts[idx]
+            fp = map_dir / f"frame_{int(mfn):06d}.jpg"
+            if not fp.exists():
+                continue
+            frame = cv2.imread(str(fp))
+            if frame is None:
+                continue
+            lx1, lx2 = int(mx) - 49, int(mx) + 49
+            ly1, ly2 = int(my) - 20 - 20, int(my) - 20
+            if lx1 < 0 or ly1 < 0 or lx2 >= frame.shape[1] or ly2 >= frame.shape[0]:
+                continue
+            label = frame[ly1:ly2, lx1:lx2]
+            if label.shape[0] < 15 or label.shape[1] < 50:
+                continue
+            results = reader.readtext(label, detail=0)
+            found = False
+            for text in results:
+                clean = ''.join(c.lower() for c in text if c.isalnum())
+                for name in player_names:
+                    if _fuzzy_match(clean, name.lower()):
+                        player_ids[tid] = name
+                        found = True
+                        break
+                if found:
+                    break
+            if found:
+                break
+
+    # Elimination fallback
+    identified = set(player_ids.values())
+    missing = player_names - identified
+    if len(missing) == 1 and len(player_ids) == len(player_names) - 1:
+        for tid in trajectories:
+            if tid not in player_ids:
+                player_ids[tid] = missing.pop()
                 break
 
     return player_ids
