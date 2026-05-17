@@ -44,14 +44,17 @@ COLOR_DEBOUNCE = 5    # frames before ranking change confirmed
 
 # Known hue centers for each team color (OpenCV H values)
 HUE_CENTERS = {
-    "red":    (0, 10, 170, 180),   # wraps around 0/180
+    "red":    (0, 10, 170, 180),
     "orange": (12, 22),
     "yellow": (26, 34),
     "green":  (45, 75),
     "blue":   (100, 125),
     "purple": (135, 160),
-    "white":  None,  # white has no hue, detected by low S + high V
+    "white":  None,
 }
+
+# orange and yellow are the same team — unify as yellow
+COLOR_ALIASES = {"orange": "yellow"}
 
 
 def row_y(idx: int) -> int:
@@ -235,23 +238,28 @@ class GameAnalyzer:
                 gt = e.get("game_time_str", "")
 
                 if e["type"] == "player_status":
-                    pnames = player_names.get(e.get("team_color", ""), ["?", "?", "?"])
+                    tc = COLOR_ALIASES.get(e.get("team_color",""), e.get("team_color",""))
+                    pnames = player_names.get(tc, ["?", "?", "?"])
                     pname = pnames[e.get("player_idx", 0)] if e.get("player_idx") is not None else ""
                     w.writerow([
                         fn, ts, gt, e["type"],
-                        f'{e.get("team_name","")}({e.get("team_color","")})',
+                        f'{e.get("team_name","")}({tc})',
                         pname,
                         e.get("from", ""),
                         e.get("to", ""),
                     ])
                 elif e["type"] == "ranking_change":
-                    row = e.get("row", 0) + 1  # 1-indexed rank
+                    fc = COLOR_ALIASES.get(e.get("from_color",""), e.get("from_color",""))
+                    tc = COLOR_ALIASES.get(e.get("to_color",""), e.get("to_color",""))
+                    fn_ = COLOR_ALIASES.get(e.get("from_name",""), e.get("from_name",""))
+                    tn = COLOR_ALIASES.get(e.get("to_name",""), e.get("to_name",""))
+                    row = e.get("row", 0) + 1
                     w.writerow([
                         fn, ts, gt, e["type"],
-                        f'{e.get("to_name","")}({e.get("to_color","")})',
+                        f'{tn}({tc})',
                         f'Rank #{row}',
-                        f'{e.get("from_name","")}({e.get("from_color","")})',
-                        f'{e.get("to_name","")}({e.get("to_color","")})',
+                        f'{fn_}({fc})',
+                        f'{tn}({tc})',
                     ])
                 else:
                     w.writerow([fn, ts, gt, e.get("type",""), "", "", "", ""])
@@ -408,7 +416,8 @@ class GameAnalyzer:
                         best_score = score
                         best_color = name
 
-        return best_color if best_score > 0 else "unknown"
+        result = best_color if best_score > 0 else "unknown"
+        return COLOR_ALIASES.get(result, result)
 
     # ================================================================
     # Color → Name Map (OCR)
