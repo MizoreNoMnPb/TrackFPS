@@ -1,14 +1,5 @@
 opencv-python>=4.8
-ultralytics>=8.0
 numpy>=1.24
-scipy>=1.10
-scikit-learn>=1.2
-torch>=2.0
-torchvision>=0.15
-Pillow>=10.0
-matplotlib>=3.7
-pandas>=2.0
-filterpy>=1.4
-lap>=0.4
-tqdm>=4.65
-pyyaml>=6.0
+easyocr>=1.7
+pytesseract>=0.3
+PyYAML>=6.0

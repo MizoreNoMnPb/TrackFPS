@@ -1,67 +1,50 @@
-# TrackFPS
+# TrackFPS — FPS Game Minimap Player Trajectory Extraction
 
-FPS游戏2D俯视视角视频 — 选手轨迹提取与行为分析
+Extracts and analyzes player movement trajectories from FPS game minimap footage (1080p60fps). Tracks 3-player squads across 6 teams, detects game events (knocks, kills, rescues, eliminations), and generates annotated trajectory maps with speed heatmaps.
 
-## 功能
+## Pipeline
 
-自动从FPS游戏顶视角录像中：
-1. 检测并跟踪目标队伍选手
-2. 提取完整移动轨迹
-3. 识别关键事件（方向变化、射击、拾取等）
-4. 生成带时序标注的可视化路线图
+```
+Video → Map Viewport Detection → Frame Extraction → Dot Tracking → Event Detection → Output
+```
 
-## 环境配置
+1. **Viewport Detection** (`map_extractor.py`): Scans video for minimap overlay (right side of screen). Detects map border at x=1008, crops map (854x852) and game view (998x559) using annotated boundaries. Uses ORB feature matching + homography to align viewport with reference map. Skips frames without visible timer (loading/inventory screens).
+
+2. **Player Dot Tracking** (`dot_tracker.py`): Per-team dot detection using median background subtraction + HoughCircles + color filter. 14-pixel circular dots (BGR=(230,235,234) for white team). Greedy nearest-neighbor matching (max 30px inter-frame displacement) for smooth trajectories. OCR-based player identification from name labels above dots. Outputs individual trajectory maps with speed/heatmap overlays.
+
+3. **Game UI Analysis** (`game_analyzer.py`): Reads team table (6 rows x 3 players) using hue histogram peak detection. Player status via 7x9 template matching (alive/knocked/defeated/eliminated). Timer OCR (Tesseract PSM 11) for game clock alignment across views.
+
+4. **Kill Feed** (`killreport.py`): Detects right-aligned kill notifications at (546,44) 447x18px. EasyOCR + fuzzy name matching against known team/player names.
+
+## Key Challenges
+
+- **Dot detection noise**: Map features (roads, labels) mimic player dots. Fixed with median background subtraction (static map, no scrolling) + area filter (>100px foreground area).
+- **Color classification**: Semi-transparent team color bars bleed game background. Solved with temporal smoothing (15-frame window) + majority voting + global timer-based outlier rejection (RANSAC).
+- **Player identification**: OCR on 98x20px name labels at 20px above dot center. Fuzzy Levenshtein matching with elimination fallback for unidentified tracks.
+- **Timer OCR drift**: PSM 6 misread "19" as "13" causing 6-minute error. Switched to PSM 11 + RANSAC outlier rejection for stable global timer mapping across all views.
+
+## Usage
 
 ```bash
-conda create -n trackfps python=3.12 -y
 conda activate trackfps
-pip install -r requirements.txt
+python -c "from src.map_extractor import run; run('input/Final/Brakkesh_Game2.mp4')"
+python -c "from src.game_analyzer import GameAnalyzer; a=GameAnalyzer(teams_config='config/teams.json'); a.analyze_view('output/.../View0')"
+python -c "from src.dot_tracker import track_team; track_team(map_dir, 'white', players, 'INK', map_region='...')"
 ```
 
-## 运行
-
-```bash
-python main.py                           # 使用默认配置
-python main.py -c config/custom.yaml     # 使用自定义配置
-```
-
-## 项目结构
+## Output Structure
 
 ```
-TrackFPS/
-├── main.py                  # 入口
-├── config/
-│   └── default.yaml         # 默认配置
-├── src/
-│   ├── preprocessing.py     # 视频抽帧与图像增强
-│   ├── detection.py         # YOLO选手检测 + 队伍颜色分类
-│   ├── tracking.py          # SORT多目标跟踪 + 卡尔曼滤波
-│   ├── events.py            # 事件检测（方向/射击/拾取）
-│   ├── mapping.py           # 像素→地图坐标转换
-│   ├── visualization.py     # 轨迹图与速度热力图
-│   └── pipeline.py          # 管道编排
-├── input/                   # 输入视频
-├── output/                  # 所有输出结果
-├── notebooks/               # 实验性Notebook
-└── requirements.txt
+output/{MapName}/Game{N}/View{M}/
+├── map/                  # Cropped minimap frames (854x852)
+├── game/                 # Cropped game UI frames (998x559)
+├── map_region.png        # Reference map crop
+├── map_region_labeled.png
+├── metadata.json         # Viewport coords, homography, frame range
+├── game_analysis.json    # Per-frame UI state + event timeline
+├── events.csv            # Human-readable event table
+└── trajectory/
+    ├── track_{Team}_{Player}.jpg   # Individual trajectory maps
+    ├── heatmap_{Team}_{Player}.jpg # Speed heatmaps
+    └── stats_{Team}.json           # Speed, turns, distance
 ```
-
-## 输出
-
-| 文件 | 位置 | 格式 |
-|---|---|---|
-| 轨迹数据 | `output/trajectories/` | CSV + GeoJSON |
-| 事件时间表 | `output/events/` | CSV + JSON |
-| 轨迹可视化图 | `output/visualizations/` | PNG |
-| 速度热力图 | `output/visualizations/` | PNG（可选） |
-
-## 配置要点
-
-编辑 `config/default.yaml`：
-
-- `input.video_path` — 视频路径
-- `target.team_color` — 目标队伍颜色（white/red/blue/green等）
-- `detection.model_path` — YOLO模型路径（先用预训练，建议用俯视视角数据微调）
-- `detection.conf_threshold` — 检测置信度阈值（小目标调低至0.25-0.35）
-- `tracking.max_age` — 跟踪丢失后保留帧数（遮挡多时调大）
-- `events` — 各事件检测的阈值参数
