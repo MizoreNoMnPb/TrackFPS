@@ -51,11 +51,25 @@ Kill feed: detects top-right kill notifications at (546,44) 447×18px. Frame dif
 
 ## Environment
 
-Requires conda and tesseract:
+Requires Python 3.12, conda, and tesseract OCR.
 
+**Linux (Ubuntu/Debian):**
 ```bash
 # System package for OCR
 sudo apt install tesseract-ocr tesseract-ocr-chi-sim
+
+# Python environment
+conda create -n trackfps python=3.12 -y
+conda activate trackfps
+pip install -r requirements.txt
+```
+
+**Windows:**
+```bash
+# 1. Install tesseract from https://github.com/UB-Mannheim/tesseract/wiki
+#    (check "Chinese Simplified" during installation)
+# 2. Add to PATH or set in code:
+#    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # Python environment
 conda create -n trackfps python=3.12 -y

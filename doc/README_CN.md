@@ -51,11 +51,25 @@
 
 ## 环境配置
 
-依赖 conda 与 tesseract：
+依赖 Python 3.12、conda 与 tesseract OCR。
 
+**Linux (Ubuntu/Debian)：**
 ```bash
 # OCR 系统包
 sudo apt install tesseract-ocr tesseract-ocr-chi-sim
+
+# Python 环境
+conda create -n trackfps python=3.12 -y
+conda activate trackfps
+pip install -r requirements.txt
+```
+
+**Windows：**
+```bash
+# 1. 从 https://github.com/UB-Mannheim/tesseract/wiki 下载安装 tesseract
+#    （安装时勾选 Chinese Simplified）
+# 2. 添加到 PATH 或在代码中指定路径：
+#    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 # Python 环境
 conda create -n trackfps python=3.12 -y
