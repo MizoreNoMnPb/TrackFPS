@@ -227,21 +227,34 @@ class GameAnalyzer:
         with open(out, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["frame", "video_time", "game_time", "type",
-                        "team", "player", "from_status", "to_status"])
+                        "team", "player", "detail", "extra"])
             for e in events:
                 fn = e.get("frame", "")
                 vs = int(int(fn.replace("frame_", "")) / fps) if fn else 0
-                w.writerow([
-                    fn,
-                    f"{vs//60}:{vs%60:02d}",
-                    e.get("game_time_str", ""),
-                    e.get("type", ""),
-                    f'{e.get("team_name","")}({e.get("team_color","")})',
-                    player_names.get(e.get("team_color",""), ["?","?","?"])[e.get("player_idx",0)]
-                    if e.get("player_idx") is not None else "",
-                    e.get("from", ""),
-                    e.get("to", ""),
-                ])
+                ts = f"{vs//60}:{vs%60:02d}"
+                gt = e.get("game_time_str", "")
+
+                if e["type"] == "player_status":
+                    pnames = player_names.get(e.get("team_color", ""), ["?", "?", "?"])
+                    pname = pnames[e.get("player_idx", 0)] if e.get("player_idx") is not None else ""
+                    w.writerow([
+                        fn, ts, gt, e["type"],
+                        f'{e.get("team_name","")}({e.get("team_color","")})',
+                        pname,
+                        e.get("from", ""),
+                        e.get("to", ""),
+                    ])
+                elif e["type"] == "ranking_change":
+                    row = e.get("row", 0) + 1  # 1-indexed rank
+                    w.writerow([
+                        fn, ts, gt, e["type"],
+                        f'{e.get("to_name","")}({e.get("to_color","")})',
+                        f'Rank #{row}',
+                        f'{e.get("from_name","")}({e.get("from_color","")})',
+                        f'{e.get("to_name","")}({e.get("to_color","")})',
+                    ])
+                else:
+                    w.writerow([fn, ts, gt, e.get("type",""), "", "", "", ""])
 
     # ================================================================
     # Temporal smoothing & ranking debounce
