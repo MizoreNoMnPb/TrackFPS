@@ -1,4 +1,4 @@
-"""Track player dots: median background subtraction + HoughCircles + x-sort."""
+"""Track player dots: median background subtraction + nearest-neighbor matching."""
 
 import cv2
 import numpy as np
@@ -61,11 +61,13 @@ def detect_dots(frame, bg, color_lower, color_upper):
 
 
 def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple) -> dict:
-    """Per-frame detection + x-sort labeling."""
+    """Per-frame detection + greedy nearest-neighbor matching for smooth tracks."""
     paths = sorted(map_dir.glob("frame_*.jpg"))
     bg = build_background(map_dir)
 
-    trajectories = {0: [], 1: [], 2: []}
+    active = {}   # track_id -> list of (x, y, fn)
+    lasts = {}    # track_id -> (x, y)
+    next_id = 0
 
     for fi, fp in enumerate(paths):
         frame = cv2.imread(str(fp))
@@ -73,26 +75,58 @@ def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple) -> dict:
             continue
         fn = int(fp.stem.replace("frame_", ""))
         dots = detect_dots(frame, bg, color_lower, color_upper)
-        dots.sort(key=lambda d: d[0])
-        for i in range(min(3, len(dots))):
-            trajectories[i].append((dots[i][0], dots[i][1], fn))
+        used = set()
 
-    # Attempt OCR-based player identification at mid-view
-    player_ids = _identify_players(map_dir, trajectories)
+        # Match existing tracks to nearest dot (max 30px, longer tracks first)
+        for tid in sorted(active.keys(), key=lambda t: -len(active[t])):
+            if tid not in lasts:
+                continue
+            px, py = lasts[tid]
+            best_d, best_j = float('inf'), -1
+            for j, (dx, dy) in enumerate(dots):
+                if j in used:
+                    continue
+                d = np.sqrt((dx-px)**2 + (dy-py)**2)
+                if d < best_d and d < 30:
+                    best_d, best_j = d, j
+            if best_j >= 0:
+                used.add(best_j)
+                active[tid].append((dots[best_j][0], dots[best_j][1], fn))
+                lasts[tid] = (dots[best_j][0], dots[best_j][1])
 
-    result = {}
+        # Create new tracks for unmatched dots
+        for j, (dx, dy) in enumerate(dots):
+            if j not in used:
+                active[next_id] = [(dx, dy, fn)]
+                lasts[next_id] = (dx, dy)
+                next_id += 1
+
+    trajectories = {}
+    for tid in list(active.keys()):
+        trajectories[tid] = [(x, y, fn) for x, y, fn in active[tid]]
+
+    # Filter noise tracks first, then identify players
+    filtered = {}
     for tid, pts in trajectories.items():
-        if len(pts) < 50:
+        if len(pts) < 100:
             continue
         dx = pts[-1][0] - pts[0][0]
         dy = pts[-1][1] - pts[0][1]
         if np.sqrt(dx*dx + dy*dy) > 5:
-            pid = player_ids.get(tid)
-            if pid and pid in result:
-                pid = f"{pid}_{tid}"  # dedup
-            if pid is None:
-                pid = f"P{tid}"
-            result[pid] = pts
+            filtered[tid] = pts
+    trajectories = filtered
+
+    # Attempt OCR-based player identification
+    player_ids = _identify_players(map_dir, trajectories)
+
+    result = {}
+    for tid, pts in trajectories.items():
+        pid = player_ids.get(tid)
+        if pid and pid in result:
+            pid = f"{pid}_{tid}"
+        if pid is None:
+            pid = f"P{tid}"
+        result[pid] = pts
     return result
 
 
