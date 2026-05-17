@@ -111,36 +111,44 @@ class GameAnalyzer:
                 return int(m.group(1)) * 60 + int(m.group(2))
         return None
 
-    @staticmethod
-    def _build_timer_map(game_dir: Path) -> tuple:
-        """Build linear mapping: game_time = slope * video_fn + intercept.
-        Returns (slope, intercept) or (None, None) if timer can't be read.
+    _global_timer_slope = None
+    _global_timer_intercept = None
+
+    @classmethod
+    def _build_global_timer_map(cls, output_base: Path):
+        """Build a single global timer map from ALL views of a game.
+        The game timer counts down linearly across the entire match.
         """
-        paths = sorted(game_dir.glob("frame_*.jpg"))
-        n = len(paths)
-        if n < 10:
-            return None, None
+        import re, pytesseract
+        all_refs = []
+        for view_dir in sorted(output_base.glob("View*")):
+            game_dir = view_dir / "game"
+            paths = sorted(game_dir.glob("frame_*.jpg"))
+            n = len(paths)
+            if n < 10: continue
+            for i in np.linspace(int(n * 0.15), n - 1, 15, dtype=int):
+                frame = cv2.imread(str(paths[i]))
+                t = GameAnalyzer._ocr_timer_sec(frame)
+                if t is not None:
+                    all_refs.append((int(paths[i].stem.replace("frame_", "")), t))
 
-        refs = []
-        for i in np.linspace(int(n * 0.2), n - 1, 25, dtype=int):
-            frame = cv2.imread(str(paths[i]))
-            t = GameAnalyzer._ocr_timer_sec(frame)
-            if t is not None:
-                refs.append((int(paths[i].stem.replace("frame_", "")), t))
-        refs.sort()
+        if len(all_refs) < 5:
+            return
 
-        # Keep monotonically decreasing (timer counts down)
-        clean = [refs[0]]
-        for fn, t in refs[1:]:
+        all_refs.sort()
+        # Clean: monotonically decreasing
+        clean = [all_refs[0]]
+        for fn, t in all_refs[1:]:
             if t <= clean[-1][1] + 3:
                 clean.append((fn, t))
-        if len(clean) < 3:
-            return None, None
 
-        rf = np.array([x[0] for x in clean])
-        rt = np.array([x[1] for x in clean])
-        slope, intercept = np.polyfit(rf, rt, 1)
-        return slope, intercept
+        if len(clean) >= 3:
+            rf = np.array([x[0] for x in clean])
+            rt = np.array([x[1] for x in clean])
+            slope, intercept = np.polyfit(rf, rt, 1)
+            cls._global_timer_slope = slope
+            cls._global_timer_intercept = intercept
+            logger.info(f"Global timer: {len(clean)} refs across all views")
 
     def analyze_view(self, view_dir: str) -> dict:
         game_dir = Path(view_dir) / "game"
@@ -248,8 +256,10 @@ class GameAnalyzer:
 
         summary = self._build_summary(frame_data, events)
 
-        # Build timer map and attach game_time to events
-        slope, intercept = self._build_timer_map(game_dir)
+        # Build global timer map (once per game) and attach game_time
+        if self._global_timer_slope is None:
+            self._build_global_timer_map(Path(view_dir).parent)  # View's parent dir = Game{N}
+        slope, intercept = self._global_timer_slope, self._global_timer_intercept
         if slope is not None:
             for e in events:
                 fn = int(e["frame"].replace("frame_", ""))
