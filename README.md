@@ -4,8 +4,8 @@
 
 Extracts player trajectories from FPS game minimap footage (1080p60fps). Built on EasyOCR + OpenCV-Python. No deep learning methods due to VRAM and time constraints.
 
+> **Task results**: Example output for Brakkesh_Game2 View 2 is available in [`/TaskResult`](TaskResult/).
 > For best detection results, use the high-bitrate video source from Bilibili: [BaiduPan](https://pan.baidu.com/s/19zYqO1Wo7dG0KjOlXZJzag?pwd=TOTK) passcode: TOTK.
-> View 2 of Brakkesh_Game2 contains the segment described in the original task document.
 
 ## Notes
 
@@ -133,3 +133,34 @@ output/{MapName}/Game{N}/View{M}/
     ├── heatmap_{Team}_{Player}.jpg   # Speed heatmap
     └── stats_{Team}.json             # Speed, turns, distance stats
 ```
+
+## Events CSV Format
+
+`events.csv` columns:
+
+| Column | Description |
+|--------|-------------|
+| `frame` | Extracted frame number |
+| `video_time` | Video timestamp (M:SS) |
+| `game_time` | In-game clock countdown (M:SS) |
+| `type` | `player_status` or `ranking_change` |
+
+**player_status rows:**
+
+| Column | Description |
+|--------|-------------|
+| `team` | Team name (color) |
+| `player` | Player name from teams.json |
+| `from_status` | Previous state: alive / knocked / defeated / eliminated |
+| `to_status` | New state |
+
+**ranking_change rows:**
+
+| Column | Description |
+|--------|-------------|
+| `team` | Team moving to new rank position |
+| `player` | Rank #N (1-indexed) |
+| `from_status` | Previous team at this rank |
+| `to_status` | New team at this rank |
+
+Valid player state transitions: `alive→knocked`, `knocked→alive`, `knocked→defeated`, `defeated→alive`, `*→eliminated`.

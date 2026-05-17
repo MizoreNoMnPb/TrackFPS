@@ -4,8 +4,8 @@
 
 从 FPS 游戏 1080p60fps 录屏中自动提取选手移动轨迹并分析比赛事件。本工程基于 EasyOCR 与 OpenCV-Python。由于设备显存与时间限制，未使用深度学习方法。
 
+> **基础任务结果**：Brakkesh_Game2 View 2 的示例输出见 [`/TaskResult`](../TaskResult/)。
 > 为获得最佳检测效果，推荐使用从 Bilibili 下载的高清高码率视频源：[百度网盘](https://pan.baidu.com/s/19zYqO1Wo7dG0KjOlXZJzag?pwd=TOTK) 提取码：TOTK。
-> Brakkesh_Game2 的 View 2 即为最初任务文档中描述的对应视频片段。
 
 ## 说明
 
@@ -54,6 +54,7 @@
 依赖 Python 3.12、conda 与 tesseract OCR。
 
 **Linux (Ubuntu/Debian)：**
+
 ```bash
 # OCR 系统包
 sudo apt install tesseract-ocr tesseract-ocr-chi-sim
@@ -65,6 +66,7 @@ pip install -r requirements.txt
 ```
 
 **Windows：**
+
 ```bash
 # 1. 从 https://github.com/UB-Mannheim/tesseract/wiki 下载安装 tesseract
 #    （安装时勾选 Chinese Simplified）
@@ -133,3 +135,34 @@ output/{地图名}/Game{N}/View{M}/
     ├── heatmap_{队名}_{选手}.jpg  # 速度热力图
     └── stats_{队名}.json          # 速度、转向、距离统计
 ```
+
+## events.csv 事件表格式
+
+`events.csv` 各列含义：
+
+| 列 | 说明 |
+|----|------|
+| `frame` | 提取帧号 |
+| `video_time` | 视频时间戳 (M:SS) |
+| `game_time` | 游戏倒计时 (M:SS) |
+| `type` | `player_status`（选手状态）或 `ranking_change`（排名变化） |
+
+**player_status 行：**
+
+| 列 | 说明 |
+|----|------|
+| `team` | 队名(颜色) |
+| `player` | 选手名（对应 teams.json） |
+| `from_status` | 变化前状态：alive / knocked / defeated / eliminated |
+| `to_status` | 变化后状态 |
+
+**ranking_change 行：**
+
+| 列 | 说明 |
+|----|------|
+| `team` | 移动到新排名的队伍 |
+| `player` | 排名 #N（从 1 开始） |
+| `from_status` | 之前该排名的队伍 |
+| `to_status` | 现在该排名的队伍 |
+
+合法选手状态转移：`alive→knocked`、`knocked→alive`、`knocked→defeated`、`defeated→alive`、`*→eliminated`。
