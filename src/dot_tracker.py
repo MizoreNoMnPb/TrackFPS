@@ -371,7 +371,7 @@ def track_team(map_dir: Path, team_color: str, team_players: list[str],
             if video_sec - last_marker_sec >= 10:
                 ts = f"{int(video_sec//60)}:{int(video_sec%60):02d}"
                 cv2.circle(cvs, (int(x), int(y)), 5, (255, 255, 255), -1)
-                cv2.putText(cvs, ts, (int(x) + 12, int(y) - 18),
+                cv2.putText(cvs, ts, (int(x) + 20, int(y) - 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
                 last_marker_sec = video_sec
 
