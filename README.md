@@ -164,3 +164,10 @@ output/{MapName}/Game{N}/View{M}/
 | `to_status` | New team at this rank |
 
 Valid player state transitions: `alive→knocked`, `knocked→alive`, `knocked→defeated`, `defeated→alive`, `*→eliminated`.
+
+## Development Environment
+
+- OS: Ubuntu 22.04 (WSL2) / Windows 11
+- Python: 3.12 (conda environment `trackfps`)
+- Editor: VS Code with Claude Code extension
+- Key packages: opencv-python 4.13, easyocr 1.7, numpy 1.24+, pytesseract 0.3

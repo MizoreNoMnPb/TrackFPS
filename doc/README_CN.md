@@ -166,3 +166,10 @@ output/{地图名}/Game{N}/View{M}/
 | `to_status` | 现在该排名的队伍 |
 
 合法选手状态转移：`alive→knocked`、`knocked→alive`、`knocked→defeated`、`defeated→alive`、`*→eliminated`。
+
+## 开发环境
+
+- 系统：Ubuntu 22.04 (WSL2) / Windows 11
+- Python：3.12（conda 环境 `trackfps`）
+- 编辑器：VS Code + Claude Code 插件
+- 主要依赖：opencv-python 4.13、easyocr 1.7、numpy 1.24+、pytesseract 0.3
