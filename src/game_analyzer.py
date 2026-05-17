@@ -92,6 +92,56 @@ class GameAnalyzer:
                 self._teams_config = json.load(f)
             logger.info(f"Loaded teams config: {len(self._teams_config['teams'])} teams")
 
+    @staticmethod
+    def _ocr_timer_sec(frame) -> int | None:
+        """OCR the game timer from a game-view frame. Returns seconds or None."""
+        if frame is None:
+            return None
+        roi = frame[TIMER_Y:TIMER_Y + TIMER_H, TIMER_X:TIMER_X + TIMER_W]
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        _, b = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if b.mean() > 127:
+            b = 255 - b
+        s = cv2.resize(b, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+        import pytesseract, re
+        text = pytesseract.image_to_string(s, lang='eng', config='--psm 6').strip()
+        for line in text.split():
+            m = re.search(r'(\d{1,2}):?(\d{2})', line)
+            if m:
+                return int(m.group(1)) * 60 + int(m.group(2))
+        return None
+
+    @staticmethod
+    def _build_timer_map(game_dir: Path) -> tuple:
+        """Build linear mapping: game_time = slope * video_fn + intercept.
+        Returns (slope, intercept) or (None, None) if timer can't be read.
+        """
+        paths = sorted(game_dir.glob("frame_*.jpg"))
+        n = len(paths)
+        if n < 10:
+            return None, None
+
+        refs = []
+        for i in np.linspace(int(n * 0.2), n - 1, 25, dtype=int):
+            frame = cv2.imread(str(paths[i]))
+            t = GameAnalyzer._ocr_timer_sec(frame)
+            if t is not None:
+                refs.append((int(paths[i].stem.replace("frame_", "")), t))
+        refs.sort()
+
+        # Keep monotonically decreasing (timer counts down)
+        clean = [refs[0]]
+        for fn, t in refs[1:]:
+            if t <= clean[-1][1] + 3:
+                clean.append((fn, t))
+        if len(clean) < 3:
+            return None, None
+
+        rf = np.array([x[0] for x in clean])
+        rt = np.array([x[1] for x in clean])
+        slope, intercept = np.polyfit(rf, rt, 1)
+        return slope, intercept
+
     def analyze_view(self, view_dir: str) -> dict:
         game_dir = Path(view_dir) / "game"
         if not game_dir.exists():
@@ -197,6 +247,15 @@ class GameAnalyzer:
             })
 
         summary = self._build_summary(frame_data, events)
+
+        # Build timer map and attach game_time to events
+        slope, intercept = self._build_timer_map(game_dir)
+        if slope is not None:
+            for e in events:
+                fn = int(e["frame"].replace("frame_", ""))
+                gs = int(round(slope * fn + intercept))
+                e["game_time"] = gs
+                e["game_time_str"] = f"{gs // 60}:{gs % 60:02d}"
 
         # Valid state transitions
         VALID_TRANSITIONS = {
