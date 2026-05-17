@@ -77,6 +77,9 @@ def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple) -> dict:
         for i in range(min(3, len(dots))):
             trajectories[i].append((dots[i][0], dots[i][1], fn))
 
+    # Attempt OCR-based player identification at mid-view
+    player_ids = _identify_players(map_dir, trajectories)
+
     result = {}
     for tid, pts in trajectories.items():
         if len(pts) < 50:
@@ -84,8 +87,83 @@ def track_dots(map_dir: Path, color_lower: tuple, color_upper: tuple) -> dict:
         dx = pts[-1][0] - pts[0][0]
         dy = pts[-1][1] - pts[0][1]
         if np.sqrt(dx*dx + dy*dy) > 5:
-            result[tid] = pts
+            pid = player_ids.get(tid)
+            if pid and pid in result:
+                pid = f"{pid}_{tid}"  # dedup
+            if pid is None:
+                pid = f"P{tid}"
+            result[pid] = pts
     return result
+
+
+def _fuzzy_match(text, target):
+    """Check if target appears in text with <=1 char error, first char must match."""
+    if target in text:
+        return True
+    for i in range(len(text) - len(target) + 1):
+        window = text[i:i+len(target)]
+        if window[0] != target[0]:
+            continue  # first char must match
+        err = sum(1 for a, b in zip(window, target) if a != b)
+        if err <= 1:
+            return True
+    return False
+
+
+def _identify_players(map_dir, trajectories):
+    """OCR player names from labels at mid-view frames to identify each track."""
+    try:
+        import easyocr
+        reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+    except ImportError:
+        return {}
+
+    KNOWN_PLAYERS = {"BabyB", "Kilzal", "tooEzze"}
+    player_ids = {}
+
+    for tid, pts in trajectories.items():
+        for frac in [0.5, 0.25, 0.75]:
+            idx = int(len(pts) * frac)
+            mx, my, mfn = pts[idx]
+            fn_str = f"frame_{int(mfn):06d}.jpg"
+            fp = map_dir / fn_str
+            if not fp.exists():
+                continue
+            frame = cv2.imread(str(fp))
+            if frame is None:
+                continue
+            lx1, lx2 = int(mx) - 49, int(mx) + 49
+            ly1, ly2 = int(my) - 20 - 20, int(my) - 20
+            if lx1 < 0 or ly1 < 0 or lx2 >= frame.shape[1] or ly2 >= frame.shape[0]:
+                continue
+            label = frame[ly1:ly2, lx1:lx2]
+            if label.shape[0] < 15 or label.shape[1] < 50:
+                continue
+            results = reader.readtext(label, detail=0)
+            found = False
+            for text in results:
+                clean = ''.join(c.lower() for c in text if c.isalnum())
+                for name in KNOWN_PLAYERS:
+                    if _fuzzy_match(clean, name.lower()):
+                        player_ids[tid] = name
+                        found = True
+                        break
+                if found:
+                    break
+            if found:
+                logger.info(f"  Track {tid} → {player_ids[tid]}")
+                break
+    # Elimination: if 2 of 3 identified, the 3rd is the remaining player
+    identified = set(player_ids.values())
+    missing = KNOWN_PLAYERS - identified
+    if len(missing) == 1 and len(player_ids) == 2:
+        for tid in trajectories:
+            if tid not in player_ids:
+                player_ids[tid] = missing.pop()
+                logger.info(f"  Track {tid} → {player_ids[tid]} (elimination)")
+                break
+
+    return player_ids
 
 
 def draw_trajectories(map_region_path: str, trajectories: dict,
