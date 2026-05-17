@@ -48,7 +48,7 @@ def detect_dots(frame, bg, color_lower, color_upper):
         # Verify blob area in fg_color matches expected dot size
         patch = fg_color[y-8:y+8, x-8:x+8]
         fg_area = (patch > 0).sum()
-        if fg_area < 80:  # real 14x14 dot has ~120-180 fg pixels
+        if fg_area < 100:  # real ~14x14 dot has 120-180 fg pixels
             continue
         dots.append((int(x), int(y)))
 
