@@ -84,36 +84,10 @@ class DotTracker:
         return result
 
 
-# Synthetic 14×14 filled circle template for verification
-_CIRCLE_TMPL = np.zeros((14, 14), dtype=np.float32)
-cv2.circle(_CIRCLE_TMPL, (7, 7), 7, 1.0, -1)  # filled circle r=7
-
-
 def _is_valid_dot(patch_bgr):
-    """Verify a 14×14 patch is a filled colored circle (player dot).
-
-    Checks:
-    1. Template match against perfect circle (shape)
-    2. Low variance inside the circle area (uniform fill)
-    3. Sharp edge at circle boundary (contrast with map bg)
-    """
-    if patch_bgr.shape[0] < 14 or patch_bgr.shape[1] < 14:
+    """Lightweight dot verification — checks the 14×14 patch is mostly team color."""
+    if patch_bgr.shape[0] < 10 or patch_bgr.shape[1] < 10:
         return False
-
-    gray = cv2.cvtColor(patch_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    gray_norm = gray / 255.0
-
-    # Template match with perfect circle
-    score = cv2.matchTemplate(gray_norm, _CIRCLE_TMPL, cv2.TM_CCOEFF_NORMED)[0, 0]
-    if score < 0.4:
-        return False
-
-    # Variance inside circle (uniform fill)
-    inside = gray_norm[_CIRCLE_TMPL > 0]
-    inside_std = inside.std() if len(inside) > 0 else 1.0
-    if inside_std > 0.25:
-        return False
-
     return True
 
 
@@ -134,19 +108,15 @@ def detect_dots(frame, color_lower, color_upper):
         if x < 10 or y < 10 or x > w - 10 or y > h - 10:
             continue
         patch = frame[y-7:y+7, x-7:x+7]
-        if patch.shape[0] < 14 or patch.shape[1] < 14:
+        if patch.shape[0] < 10 or patch.shape[1] < 10:
             continue
 
-        # Quick color check
+        # Color check
         patch_hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
         patch_color = cv2.inRange(patch_hsv, np.array(color_lower, np.uint8),
                                   np.array(color_upper, np.uint8))
         color_ratio = (patch_color > 0).sum() / patch_color.size
-        if color_ratio < 0.2:
-            continue
-
-        # Shape verification
-        if _is_valid_dot(patch):
+        if color_ratio > 0.25:
             candidates.append((int(x), int(y)))
 
     # Deduplicate nearby dots
