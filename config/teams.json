@@ -1,0 +1,12 @@
+{
+  "game": "Final",
+  "info_page_frame": 8451,
+  "teams": [
+    {"color": "white", "name": "INK", "players": ["BabyB", "Kilzal", "tooEzze"]},
+    {"color": "yellow", "name": "ESG", "players": ["FUJIANG", "DT", "LIUYUN"]},
+    {"color": "green", "name": "Q9", "players": ["K1De", "GuoR", "Mo"]},
+    {"color": "red", "name": "MG", "players": ["eNvyx", "Onigiri", "Bonnieeeee"]},
+    {"color": "blue", "name": "FN", "players": ["Flarich", "nhrir", "usbishka"]},
+    {"color": "purple", "name": "MBA", "players": ["skiteyyy", "Bulldo", "yuvel11r"]}
+  ]
+}

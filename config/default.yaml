@@ -1,0 +1,76 @@
+# ============================================================
+# TrackFPS Configuration
+# FPS Game Player Trajectory Extraction & Behavior Analysis
+# ============================================================
+
+# Video input
+input:
+  video_path: "input/Brakkesh_Game2.mp4"
+  frame_skip: 2           # process every N frames (1 = all frames)
+  max_frames: null         # max frames to process (null = entire segment)
+
+# Map reference images directory
+map_dir: "map"
+
+# Output
+output:
+  dir: "output"
+
+# Scanning: detect map viewport segments
+scanning:
+  scan_step: 30            # check every N frames for map presence
+  min_segment_frames: 60   # minimum frames for a valid view segment
+  edge_density_threshold: 10.0  # minimum edge density in map region
+  border_grad_threshold: 30.0   # minimum brightness gradient at map border
+
+# Detection (background subtraction + blob detection)
+detection:
+  conf_threshold: 0.35
+  iou_threshold: 0.45      # NMS IoU threshold for merging overlapping detections
+  brightness_threshold: 200 # minimum pixel brightness for player dots (0-255)
+  blob_min_area: 3         # minimum blob area in pixels
+  blob_max_area: 120       # maximum blob area in pixels
+  min_circularity: 0.4     # minimum shape circularity (0-1)
+  motion_threshold: 30     # minimum brightness difference from background
+  bg_update_rate: 0.0      # fixed background (map is static)
+  bg_warmup_frames: 5      # frames to build background model
+  edge_margin: 15          # ignore pixels near viewport edges
+  target_color: "white"    # target team color to track
+
+# Tracking (SORT)
+tracking:
+  max_age: 30              # frames to keep track alive without detection
+  min_hits: 3              # consecutive detections to confirm track
+  iou_threshold: 0.3       # IoU threshold for detection-track matching
+  kalman:
+    process_noise: 1.0
+    measurement_noise: 10.0
+
+# Event detection
+events:
+  direction_change:
+    angle_threshold: 45
+    min_segment: 5
+  shooting:
+    detection_method: "brightness"
+    brightness_spike_thresh: 2.5
+    window_size: 5
+  looting:
+    min_stop_frames: 10
+    velocity_threshold: 2.0
+  kill_death:
+    check_killfeed: false
+
+# Visualization
+visualization:
+  trajectory:
+    line_width: 2
+    alpha: 0.7
+    show_arrows: true
+    arrow_spacing: 20
+  events:
+    marker_size: 12
+    show_labels: false
+  speed_heatmap: false
+  output_dpi: 150
+  output_format: "png"

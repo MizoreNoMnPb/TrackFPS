@@ -1,0 +1,14 @@
+/.vscode
+/.claude
+/output
+/input
+/__pycache___
+/vibe.txt
+/yolov8n.pt
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.egg-info/
+*.swp
+*.swo
